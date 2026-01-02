@@ -1,7 +1,7 @@
 {
-  "name": "acms-api-preview",
-  "version": "0.0.5",
-  "description": "a-blog cms をヘッドレスCMSとして利用する場合にプレビュー機能を実装するための拡張アプリです。",
+  "name": "acms-wp-import",
+  "version": "0.0.0",
+  "description": "WordPress のデータを a-blog cms にインポートするための拡張アプリです。",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",

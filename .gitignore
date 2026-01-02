@@ -8,10 +8,11 @@ node_modules
 .DS_Store
 
 # tmp directory
-./ApiPreview
+./WPImport
 
 vendor
 *.log
 .phplint-cache
 
-build
+build/
+ai/

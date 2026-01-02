@@ -1,6 +1,6 @@
 {
-  "name": "uidev1116/acms-api-preview",
-  "description": "a-blog cms をヘッドレスCMSとして利用する場合にプレビュー機能を実装するための拡張アプリです。",
+  "name": "uidev1116/acms-wp-import",
+  "description": "WordPress のデータを a-blog cms にインポートするための拡張アプリです。",
   "scripts": {
     "lint": [
       "vendor/bin/phpcs --standard=phpcs.xml || true"

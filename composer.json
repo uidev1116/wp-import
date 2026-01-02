@@ -1,0 +1,15 @@
+{
+  "name": "uidev1116/acms-api-preview",
+  "description": "a-blog cms をヘッドレスCMSとして利用する場合にプレビュー機能を実装するための拡張アプリです。",
+  "scripts": {
+    "lint": [
+      "vendor/bin/phpcs --standard=phpcs.xml || true"
+    ],
+    "format": [
+      "vendor/bin/phpcbf --standard=phpcs.xml"
+    ]
+  },
+  "require-dev": {
+    "squizlabs/php_codesniffer": "^3.7"
+  }
+}

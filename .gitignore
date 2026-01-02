@@ -1,0 +1,17 @@
+# vscode settings
+.vscode
+
+# node
+node_modules
+
+# macOS
+.DS_Store
+
+# tmp directory
+./ApiPreview
+
+vendor
+*.log
+.phplint-cache
+
+build

@@ -1,0 +1,32 @@
+{
+  "name": "acms-api-preview",
+  "version": "0.0.5",
+  "description": "a-blog cms をヘッドレスCMSとして利用する場合にプレビュー機能を実装するための拡張アプリです。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package": "npm run setup && npm run build:app",
+    "build:app": "node ./tools/build.js",
+    "version:sync": "node ./tools/version.js",
+    "release:commit": "node ./tools/commit.js",
+    "release:patch": "npm version patch --no-git-tag-version && npm run version:sync && npm run release:commit",
+    "release:minor": "npm version minor --no-git-tag-version && npm run version:sync && npm run release:commit",
+    "release:major": "npm version mejor --no-git-tag-version && npm run version:sync && npm run release:commit",
+    "setup": "node ./tools/setup.js"
+  },
+  "author": "uidev1116",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uidev1116/acms-api-preview.git"
+  },
+  "devDependencies": {
+    "archiver": "^5.3.0",
+    "co": "^4.6.0",
+    "fs-extra": "^10.0.0",
+    "node-cmd": "^4.0.0"
+  },
+  "volta": {
+    "node": "24.12.0"
+  }
+}

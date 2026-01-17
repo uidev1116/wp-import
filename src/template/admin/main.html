@@ -1,0 +1,273 @@
+<header>
+  <div>
+    @include("/admin/topicpath.html")
+  </div>
+  <div>
+    <h1 class="acms-admin-admin-title js-dialog-title">
+      <!--T-->WordPressインポート<!--/T-->
+    </h1>
+  </div>
+</header>
+
+<!-- BEGIN_MODULE Touch_SessionWithAdministration -->
+<!-- BEGIN_MODULE Admin_Errors -->
+<div role="alert" class="acms-admin-alert acms-admin-alert-icon acms-admin-alert-danger">
+  <span class="acms-admin-icon acms-admin-icon-news acms-admin-alert-icon-before" aria-hidden="true"></span>
+  <button
+    type="button"
+    aria-label="アラートを閉じる"
+    class="js-acms-alert-close acms-admin-alert-icon-after"
+  >
+    ×
+  </button>
+  <!-- BEGIN_IF [{error}/eq/] -->
+  <!--T-->インポートに成功しました<!--/T-->
+  <!-- ELSE_IF [{error}/eq/1/_or_/{error}/eq/2] -->
+  <!--T-->ファイルサイズが大きすぎます<!--/T-->
+  <!-- ELSE_IF [{error}/eq/4] -->
+  <!--T-->ファイルが選択されていません<!--/T-->
+  <!-- ELSE -->
+  <!--T-->{error}<!--/T-->
+  <!-- END_IF -->
+</div>
+<!-- END_MODULE Admin_Errors -->
+<!-- BEGIN_MODULE Admin_Import_Message -->
+
+
+<!-- BEGIN_MODULE Admin_WPImport_Progress -->
+<!-- BEGIN_IF [{processing}/eq/1]-->
+<h2 class="acms-admin-admin-title2"><!--T-->WordPressインポート状況<!--/T--></h2>
+<div id="js-background-wp-import">
+  <div class="js-progress acms-admin-progress acms-admin-progress-striped acms-admin-active"
+       style="display: none;">
+    <div class="acms-admin-progress-bar">
+      <span></span>
+    </div>
+  </div>
+  <script type="text/template" class="js-processing-template">
+    <% if (!processing && success) { %>
+    <p class="acms-admin-alert acms-admin-alert-info">
+      <!--T-->インポートが完了しました。<!--/T-->
+    </p>
+    <% } else if (!processing && error) { %>
+    <p class="acms-admin-alert acms-admin-alert-warning">
+      <!--T-->インポートに失敗しました。<!--/T-->
+    </p>
+    <% } %>
+
+    <ul>
+      <% _.each(processList, function(item) { %>
+      <% if (item.status === 'ng') { %>
+      <li class="acms-admin-text-danger">[Error] <%= item.message %></li>
+      <% } else { %>
+      <li><%= item.message %></li>
+      <% } %>
+      <% }) %>
+    </ul>
+  </script>
+  <div class="js-processing-box"></div>
+</div>
+
+<script>
+(function() {
+  const checkProgress = async (element, interval) => {
+    const template = element.querySelector('.js-processing-template')?.innerText;
+    const box = element.querySelector('.js-processing-box');
+    const progress = element.querySelector('.js-progress');
+
+    if (!box || !template || !progress) {
+      return;
+    }
+
+    const progressBar = progress.querySelector('.acms-admin-progress-bar');
+    if (!progressBar) {
+      return;
+    }
+
+    const progressMessage = progress.querySelector('span');
+
+    try {
+      const formData = new FormData();
+      formData.append('ACMS_POST_WpImport_ProgressJson', 'exec');
+      formData.append('formToken', window.csrfToken);
+
+      const response = await fetch(window.location.href, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-CSRF-Token': window.csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+
+      const json = await response.json();
+
+      // タイムアウト処理
+      if (json.updatedAt) {
+        const updatedAt = new Date(json.updatedAt).getTime();
+        const now = Date.now();
+        const timeout = 180 * 1000; // 180秒
+
+        if (now - updatedAt > timeout) {
+          json.error = 'タイムアウトしました。リロードして処理が完了しているか確認してください。';
+          clearInterval(interval);
+        }
+      }
+
+      // Underscoreテンプレートエンジンを使用してHTMLを生成
+      const engine = window._.template(template);
+      box.innerHTML = engine(json);
+
+      if (json.processing) {
+        progress.style.display = '';
+        if (json.error) {
+          progressBar.style.width = '100%';
+          progressBar.classList.add('acms-admin-progress-bar-danger');
+          progressBar.classList.remove('acms-admin-progress-bar-info');
+          if (progressMessage) {
+            progressMessage.innerHTML = json.error;
+          }
+        } else {
+          const percentage = json.percentage || 0;
+          progressBar.style.width = `${percentage}%`;
+          progressBar.classList.add('acms-admin-progress-bar-info');
+          progressBar.classList.remove('acms-admin-progress-bar-danger');
+          if (progressMessage) {
+            progressMessage.innerHTML = json.inProgress || 'インポート中...';
+          }
+        }
+      } else {
+        // 処理完了時はプログレスバーを非表示
+        progress.style.display = 'none';
+        clearInterval(interval);
+      }
+
+    } catch (error) {
+      console.error('Progress check failed:', error);
+      clearInterval(interval);
+    }
+  };
+
+  const initProgressCheck = (selector, intervalTime = 1000) => {
+    const progressElement = document.querySelector(selector);
+    if (progressElement) {
+      const intervalId = setInterval(() => {
+        checkProgress(progressElement, intervalId);
+      }, intervalTime);
+    }
+  };
+
+  // ページ読み込み時にプログレス確認を開始
+  document.addEventListener('DOMContentLoaded', () => {
+    initProgressCheck('#js-background-wp-import', 2000);
+  });
+})();
+</script>
+
+<!-- ELSE -->
+<div class="acms-admin-panel">
+  <div class="acms-admin-panel-header">
+    <p class="acms-admin-panel-title">
+      <!--T-->WordPressのエクスポートデータを、インポートします。
+      <!--/T-->
+    </p>
+  </div>
+  <div class="acms-admin-panel-body">
+    <ul>
+      <li>
+        <!--T-->WordPressのエクスポートデータは、<strong>「全てのコンテンツ」</strong>を選択して実行してください。<!--/T-->
+      </li>
+      <li>
+        <!--T-->インポートされるデータは現在ログインしているユーザーでインポートされます<!--/T-->
+      </li>
+      <li>
+        <!--T-->WordPressの各投稿における、パスワード保護設定は無視されてインポートされます<!--/T-->
+      </li>
+    </ul>
+  </div>
+</div>
+
+<form action="" method="post" enctype="multipart/form-data" class="acms-admin-form acms-admin-margin-bottom-large">
+  <h2 class="acms-admin-admin-title2">
+    <!--T-->投稿データのインポート<!--/T-->
+  </h2>
+  <table class="adminTable acms-admin-table-admin-edit">
+    <tr>
+      <th>
+        <!--T-->インポート先ブログ<!--/T-->
+      </th>
+      <td>
+        %{BLOG_NAME}（<!--T-->現在のブログ<!--/T-->）
+      </td>
+    </tr>
+    <tr>
+      <th>
+        <!--T-->インポートデータ（XML）<!--/T-->
+      </th>
+      <td><input type="file" name="wordpress_import_file"></td>
+    </tr>
+    <tr>
+      <th>
+        <!--T-->メディアファイルを移行する<!--/T-->
+      </th>
+      <td>
+        <input type="hidden" name="include_media" value="off">
+        <div class="acms-admin-form-checkbox">
+          <input type="checkbox" name="include_media" value="on" checked="checked" id="input-checkbox-include_media">
+          <label for="input-checkbox-include_media">
+            <i class="acms-admin-ico-checkbox"></i>
+            <!--T-->メディアファイルを移行する<!--/T-->
+          </label>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <th>
+        <!--T-->カテゴリーを自動作成する<!--/T-->
+      </th>
+      <td>
+        <input type="hidden" name="create_categories" value="off">
+        <div class="acms-admin-form-checkbox">
+          <input type="checkbox" name="create_categories" value="on" checked="checked" id="input-checkbox-create_categories">
+          <label for="input-checkbox-create_categories">
+            <i class="acms-admin-ico-checkbox"></i>
+            <!--T-->カテゴリーを自動作成する<!--/T-->
+          </label>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <th>
+        <!--T-->タグを自動作成する<!--/T-->
+      </th>
+      <td>
+        <input type="hidden" name="create_tags" value="off">
+        <div class="acms-admin-form-checkbox">
+          <input type="checkbox" name="create_tags" value="on" checked="checked" id="input-checkbox-create_tags">
+          <label for="input-checkbox-create_tags">
+            <i class="acms-admin-ico-checkbox"></i>
+            <!--T-->タグを自動作成する<!--/T-->
+          </label>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <th>
+        <!--T-->インポート<!--/T-->
+      </th>
+      <td>
+        <button
+          class="acms-admin-btn-admin acms-admin-btn-admin-primary acms-admin-btn-admin-save"
+          type="submit"
+          name="ACMS_POST_WPImport_Execute"
+          onclick="return confirm('<!--T-->インポートを実行します。よろしいですか？<!--/T-->');"
+        >
+          <!--T-->インポートを実行する<!--/T-->
+        </button>
+      </td>
+    </tr>
+  </table>
+</form>
+<!-- END_IF -->
+<!-- END_MODULE Admin_WPImport_Progress -->
+<!-- END_MODULE Touch_SessionWithAdministration -->

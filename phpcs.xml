@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<ruleset name="WPImport Plugin Coding Standards">
+    <description>WordPress Import Plugin coding standards based on PSR-12</description>
+
+    <!-- ファイル検索対象 -->
+    <file>src/</file>
+
+    <!-- 除外パターン -->
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/build/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    <exclude-pattern>*/ai/*</exclude-pattern>
+
+    <!-- PSR-12 coding standard -->
+    <rule ref="PSR12">
+        <!-- a-blog cms特有の命名規則のため一部例外を許可 -->
+        <exclude name="PSR1.Classes.ClassDeclaration.MissingNamespace"/>
+    </rule>
+
+    <!-- 追加ルール -->
+    <rule ref="Generic.Arrays.DisallowLongArraySyntax"/>
+    <rule ref="Generic.CodeAnalysis.UnusedFunctionParameter"/>
+    <rule ref="Generic.Commenting.Todo"/>
+    <rule ref="Generic.ControlStructures.InlineControlStructure"/>
+    <rule ref="Generic.Files.ByteOrderMark"/>
+    <rule ref="Generic.Files.LineEndings">
+        <properties>
+            <property name="eolChar" value="\n"/>
+        </properties>
+    </rule>
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="lineLimit" value="120"/>
+            <property name="absoluteLineLimit" value="140"/>
+        </properties>
+    </rule>
+    <rule ref="Generic.Formatting.DisallowMultipleStatements"/>
+    <rule ref="Generic.Functions.FunctionCallArgumentSpacing"/>
+    <rule ref="Generic.NamingConventions.UpperCaseConstantName"/>
+    <rule ref="Generic.PHP.DisallowShortOpenTag"/>
+    <rule ref="Generic.PHP.ForbiddenFunctions">
+        <properties>
+            <property name="forbiddenFunctions" type="array">
+                <element key="sizeof" value="count"/>
+                <element key="delete" value="unset"/>
+                <element key="print" value="echo"/>
+                <element key="create_function" value="null"/>
+            </property>
+        </properties>
+    </rule>
+    <rule ref="Generic.PHP.LowerCaseConstant"/>
+    <rule ref="Generic.PHP.LowerCaseKeyword"/>
+    <rule ref="Generic.Strings.UnnecessaryStringConcat"/>
+    <rule ref="Generic.WhiteSpace.DisallowTabIndent"/>
+
+    <!-- 型宣言の強制 -->
+    <rule ref="SlevomatCodingStandard.TypeHints.DeclareStrictTypes"/>
+    <rule ref="SlevomatCodingStandard.TypeHints.ReturnTypeHint"/>
+    <rule ref="SlevomatCodingStandard.TypeHints.PropertyTypeHint"/>
+    <rule ref="SlevomatCodingStandard.TypeHints.ParameterTypeHint"/>
+
+    <!-- セキュリティ関連 -->
+    <rule ref="Generic.PHP.NoSilencedErrors"/>
+
+    <!-- パフォーマンス関連 -->
+    <rule ref="Squiz.PHP.DisallowObEndFlush"/>
+    <rule ref="Squiz.PHP.DisallowSizeFunctionsInLoops"/>
+
+    <!-- 設定 -->
+    <arg name="colors"/>
+    <arg value="sp"/>
+    <arg name="parallel" value="8"/>
+    <arg name="cache" value=".phplint-cache"/>
+
+    <!-- 報告レベル -->
+    <arg name="warning-severity" value="0"/>
+    <arg name="error-severity" value="1"/>
+</ruleset>

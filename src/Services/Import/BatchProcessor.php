@@ -1,0 +1,600 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Acms\Plugins\WPImport\Services\Import;
+
+use Acms\Services\Facades\Logger;
+use Acms\Services\Facades\Common;
+use Acms\Services\Facades\Application as Container;
+use Acms\Plugins\WPImport\Services\WXR\WXREntry;
+use Acms\Plugins\WPImport\Services\WXR\WXRMedia;
+use Acms\Plugins\WPImport\Services\WXR\WXRCategory;
+use Acms\Plugins\WPImport\Services\Media\Downloader;
+use Acms\Plugins\WPImport\Services\Content\UrlRewriter;
+
+/**
+ * 最適化されたバッチ処理システム
+ */
+class BatchProcessor
+{
+    /** @var EntryImporter */
+    private EntryImporter $entryImporter;
+
+    /** @var MediaImporter */
+    private MediaImporter $mediaImporter;
+
+    /** @var CategoryCreator */
+    private CategoryCreator $categoryCreator;
+
+    /** @var Downloader */
+    private Downloader $downloader;
+
+    /** @var UrlRewriter */
+    private UrlRewriter $urlRewriter;
+
+    /** @var int メモリ使用量の上限（バイト） */
+    private int $memoryLimit;
+
+
+    /** @var int バッチサイズの最小値 */
+    private const MIN_BATCH_SIZE = 5;
+
+    /** @var int バッチサイズの最大値 */
+    private const MAX_BATCH_SIZE = 100;
+
+    public function __construct()
+    {
+        $this->entryImporter = Container::make(EntryImporter::class);
+        $this->mediaImporter = Container::make(MediaImporter::class);
+        $this->categoryCreator = Container::make(CategoryCreator::class);
+        $this->downloader = Container::make(Downloader::class);
+        $this->urlRewriter = Container::make(UrlRewriter::class);
+
+        // メモリ制限の80%を上限とする
+        $this->memoryLimit = (int)(memory_get_usage() * 0.8);
+    }
+
+    /**
+     * 全データの統合処理（カテゴリー、メディア、エントリー）
+     *
+     * @param array<WXREntry> $entries
+     * @param array<WXRMedia> $medias
+     * @param array<WXRCategory> $categories
+     * @param array{
+     *     batch_size: int,
+     *     include_media: bool,
+     *     create_categories: bool,
+     *     create_tags: bool,
+     *     target_blog_id: int
+     * } $settings
+     * @param \Acms\Services\Common\Logger $progressLogger
+     * @return array{
+     *     entry_success: int,
+     *     entry_error: int,
+     *     media_success: int,
+     *     media_error: int,
+     *     category_success: int,
+     *     total_time: float,
+     *     memory_peak: int
+     * }
+     */
+    public function processAll(
+        array $entries,
+        array $medias,
+        array $categories,
+        array $settings,
+        \Acms\Services\Common\Logger $progressLogger
+    ): array {
+        $startTime = microtime(true);
+        $startMemory = memory_get_usage(true);
+
+        $results = [
+            'entry_success' => 0,
+            'entry_error' => 0,
+            'media_success' => 0,
+            'media_error' => 0,
+            'category_success' => 0,
+            'total_time' => 0,
+            'memory_peak' => 0,
+        ];
+
+        try {
+            // 1. カテゴリー作成（最初に実行）
+            $categoryMap = [];
+            if ($settings['create_categories'] && count($categories) > 0) {
+                $progressLogger->addMessage('カテゴリーを作成中...', 5, 1, false);
+                $categoryMap = $this->processCategoryCreation($categories, $settings);
+                $results['category_success'] = count($categoryMap);
+                $progressLogger->addMessage('カテゴリー作成完了: ' . count($categoryMap) . '件', 5, 1, true);
+            }
+
+            // 2. 既存のprocessCompleteメソッドを呼び出し
+            $processResults = $this->processComplete($entries, $medias, $settings, $categoryMap, $progressLogger);
+
+            // 結果をマージ
+            $results['entry_success'] = $processResults['entry_success'];
+            $results['entry_error'] = $processResults['entry_error'];
+            $results['media_success'] = $processResults['media_success'];
+            $results['media_error'] = $processResults['media_error'];
+            $results['total_time'] = microtime(true) - $startTime;
+            $results['memory_peak'] = memory_get_peak_usage(true) - $startMemory;
+
+            return $results;
+
+        } catch (\Throwable $th) {
+            Logger::error('【WPImport plugin】統合処理エラー', [
+                'error' => $th->getMessage(),
+                'trace' => $th->getTraceAsString()
+            ]);
+            throw $th;
+        }
+    }
+
+    /**
+     * エントリーと関連メディアを統合処理（既存メソッド）
+     *
+     * @param array<WXREntry> $entries
+     * @param array<WXRMedia> $medias
+     * @param array{
+     *     batch_size: int,
+     *     include_media: bool,
+     *     create_categories: bool,
+     *     create_tags: bool,
+     *     target_blog_id: int
+     * } $settings
+     * @param array<int, int> $categoryMap
+     * @param \Acms\Services\Common\Logger $progressLogger
+     * @return array{
+     *     entry_success: int,
+     *     entry_error: int,
+     *     media_success: int,
+     *     media_error: int,
+     *     total_time: float,
+     *     memory_peak: int
+     * }
+     */
+    public function processComplete(
+        array $entries,
+        array $medias,
+        array $settings,
+        array $categoryMap,
+        \Acms\Services\Common\Logger $progressLogger
+    ): array {
+        $startTime = microtime(true);
+        $startMemory = memory_get_usage(true);
+
+        $results = [
+            'entry_success' => 0,
+            'entry_error' => 0,
+            'media_success' => 0,
+            'media_error' => 0,
+            'total_time' => 0,
+            'memory_peak' => 0,
+        ];
+
+        try {
+            // メディアファイルを優先して処理（エントリー処理でURL書き換えに必要）
+            if ($settings['include_media'] && count($medias) > 0) {
+                $mediaResults = $this->processMediaBatch($medias, $settings, $progressLogger);
+                $results['media_success'] = $mediaResults['success_count'];
+                $results['media_error'] = $mediaResults['error_count'];
+
+                // メディアマッピングを構築
+                $mediaMapping = $this->buildMediaMapping($mediaResults['results']);
+            } else {
+                $mediaMapping = [];
+            }
+
+            // エントリーを処理
+            $entryResults = $this->processEntryBatch(
+                $entries,
+                $settings,
+                $categoryMap,
+                $mediaMapping,
+                $progressLogger
+            );
+            $results['entry_success'] = $entryResults['success_count'];
+            $results['entry_error'] = $entryResults['error_count'];
+
+        } catch (\Throwable $th) {
+            Logger::error('【WPImport plugin】バッチ処理中の致命的エラー', Common::exceptionArray($th));
+            $progressLogger->error('バッチ処理中に致命的エラーが発生しました: ' . $th->getMessage());
+        }
+
+        $results['total_time'] = microtime(true) - $startTime;
+        $results['memory_peak'] = memory_get_peak_usage(true) - $startMemory;
+
+        return $results;
+    }
+
+    /**
+     * エントリーのバッチ処理
+     *
+     * @param array<WXREntry> $entries
+     * @param array{
+     *     batch_size: int,
+     *     include_media: bool,
+     *     create_categories: bool,
+     *     create_tags: bool,
+     *     target_blog_id: int
+     * } $settings
+     * @param array<int, int> $categoryMap
+     * @param array<int, int> $mediaMapping
+     * @param \Acms\Services\Common\Logger $progressLogger
+     * @return array{
+     *     success_count: int,
+     *     error_count: int,
+     *     results: array<array{success: bool, entry_id?: int, error?: string}>
+     * }
+     */
+    private function processEntryBatch(
+        array $entries,
+        array $settings,
+        array $categoryMap,
+        array $mediaMapping,
+        \Acms\Services\Common\Logger $progressLogger
+    ): array {
+        $totalEntries = count($entries);
+        $batchSize = $this->optimizeBatchSize($settings['batch_size'], count($entries));
+        $successCount = 0;
+        $errorCount = 0;
+        $results = [];
+
+        $progressLogger->addMessage("エントリー処理開始: {$totalEntries}件", 0, 1, false);
+
+        foreach (array_chunk($entries, $batchSize) as $batchIndex => $batch) {
+            $batchStartTime = microtime(true);
+
+            // メモリ使用量チェック
+            // if ($this->isMemoryLimitReached()) {
+            //     $this->forceGarbageCollection();
+
+            //     if ($this->isMemoryLimitReached()) {
+            //         $progressLogger->addMessage('メモリ不足のため処理を停止しました', 0, 1, true);
+            //         break;
+            //     }
+            // }
+
+            $progressLogger->addMessage(
+                "エントリーバッチ " . ($batchIndex + 1) . "/" . ceil($totalEntries / $batchSize) . " 処理中",
+                0, 1, false
+            );
+
+            foreach ($batch as $entry) {
+                try {
+                    // URL書き換えを適用
+                    if (count($mediaMapping) > 0) {
+                        $this->applyUrlRewriting($entry, $mediaMapping);
+                    }
+
+                    $result = $this->entryImporter->importEntry($entry, $settings, $categoryMap);
+                    $results[] = $result;
+
+                    if ($result['success']) {
+                        $successCount++;
+                    } else {
+                        $errorCount++;
+                        Logger::warning('【WPImport plugin】エントリー処理失敗', [
+                            'wp_post_id' => $entry->wpPostId,
+                            'title' => $entry->title,
+                            'error' => $result['error'] ?? 'Unknown error'
+                        ]);
+                    }
+                } catch (\Throwable $th) {
+                    $errorCount++;
+                    Logger::error('【WPImport plugin】エントリー処理エラー', Common::exceptionArray($th, [
+                        'wp_post_id' => $entry->wpPostId,
+                        'title' => $entry->title,
+                    ]));
+                }
+            }
+
+            $batchTime = microtime(true) - $batchStartTime;
+            $processedCount = ($batchIndex + 1) * $batchSize;
+            $processedCount = min($processedCount, $totalEntries);
+
+            $progressLogger->addMessage(
+                "処理済み: {$processedCount}/{$totalEntries} (成功: {$successCount}, エラー: {$errorCount}) - 処理時間: " . number_format($batchTime, 2) . "秒",
+                (50 / ceil($totalEntries / $batchSize)), 1, true
+            );
+
+            // バッチ間の小休止（負荷軽減）
+            if ($batchIndex < ceil($totalEntries / $batchSize) - 1) {
+                usleep(100000); // 0.1秒
+            }
+        }
+
+        return [
+            'success_count' => $successCount,
+            'error_count' => $errorCount,
+            'results' => $results,
+        ];
+    }
+
+    /**
+     * メディアのバッチ処理
+     *
+     * @param array<WXRMedia> $medias
+     * @param array{
+     *     batch_size: int,
+     *     include_media: bool,
+     *     create_categories: bool,
+     *     target_blog_id: int
+     * } $settings
+     * @param \Acms\Services\Common\Logger $progressLogger
+     * @return array{
+     *     success_count: int,
+     *     error_count: int,
+     *     results: array<array{
+     *         wp_post_id: int,
+     *         success: bool,
+     *         media_id?: int,
+     *         path?: string,
+     *         error?: string
+     *     }>
+     * }
+     */
+    private function processMediaBatch(array $medias, array $settings, \Acms\Services\Common\Logger $progressLogger): array
+    {
+        $totalMedia = count($medias);
+        $batchSize = min($this->optimizeBatchSize($settings['batch_size'], count($medias)), 10); // メディアは小さめのバッチ
+        $successCount = 0;
+        $errorCount = 0;
+        $results = [];
+
+        $progressLogger->addMessage("メディア処理開始: {$totalMedia}件", 0, 1, false);
+
+        foreach (array_chunk($medias, $batchSize) as $batchIndex => $batch) {
+            $progressLogger->addMessage(
+                "メディアバッチ " . ($batchIndex + 1) . "/" . ceil($totalMedia / $batchSize) . " 処理中",
+                0, 1, false
+            );
+
+            foreach ($batch as $media) {
+                try {
+                    // ダウンロード
+                    $downloadResult = $this->downloader->downloadMedia($media);
+
+                    if (!$downloadResult['success']) {
+                        $errorCount++;
+                        $results[] = [
+                            'wp_post_id' => $media->wpPostId,
+                            'success' => false,
+                            'error' => $downloadResult['error']
+                        ];
+                        continue;
+                    }
+
+                    // インポート
+                    $importResult = $this->mediaImporter->importMedia(
+                        $media,
+                        $settings,
+                        $downloadResult['local_path']
+                    );
+
+                    $results[] = [
+                        'wp_post_id' => $media->wpPostId,
+                        'success' => $importResult['success'],
+                        'media_id' => $importResult['media_id'] ?? null,
+                        'path' => $importResult['path'] ?? null,
+                        'error' => $importResult['error'] ?? null,
+                    ];
+
+                    if ($importResult['success']) {
+                        $successCount++;
+                    } else {
+                        $errorCount++;
+                    }
+
+                } catch (\Throwable $th) {
+                    $errorCount++;
+                    $results[] = [
+                        'wp_post_id' => $media->wpPostId,
+                        'success' => false,
+                        'error' => $th->getMessage()
+                    ];
+                    Logger::error('【WPImport plugin】メディア処理エラー', Common::exceptionArray($th, [
+                        'wp_post_id' => $media->wpPostId,
+                    ]));
+                }
+
+                // メディア処理間の遅延（外部サーバーへの負荷軽減）
+                if ($media !== end($batch)) {
+                    usleep(100000); // 0.1秒
+                }
+            }
+
+            $processedCount = ($batchIndex + 1) * $batchSize;
+            $processedCount = min($processedCount, $totalMedia);
+
+            $progressLogger->addMessage(
+                "メディア処理済み: {$processedCount}/{$totalMedia} (成功: {$successCount}, エラー: {$errorCount})",
+                (25 / ceil($totalMedia / $batchSize)), 1, true
+            );
+
+            // バッチ間の遅延（サーバー負荷軽減）
+            if ($batchIndex < ceil($totalMedia / $batchSize) - 1) {
+                usleep(200000); // 0.2秒
+            }
+        }
+
+        return [
+            'success_count' => $successCount,
+            'error_count' => $errorCount,
+            'results' => $results,
+        ];
+    }
+
+    /**
+     * エントリーにURL書き換えを適用
+     *
+     * @param WXREntry $entry
+     * @param array<int, int> $mediaMapping
+     */
+    private function applyUrlRewriting(WXREntry $entry, array $mediaMapping): void
+    {
+        try {
+            $rewriteResult = $this->urlRewriter->rewriteUrls($entry->content, [
+                'media_mapping' => $mediaMapping
+            ]);
+
+            $entry->content = $rewriteResult['content'];
+
+            if ($rewriteResult['media_replaced'] > 0 || $rewriteResult['link_replaced'] > 0) {
+                Logger::debug('【WPImport plugin】URL書き換え実行', [
+                    'wp_post_id' => $entry->wpPostId,
+                    'title' => $entry->title,
+                    'media_replaced' => $rewriteResult['media_replaced'],
+                    'link_replaced' => $rewriteResult['link_replaced'],
+                ]);
+            }
+        } catch (\Throwable $th) {
+            Logger::error('【WPImport plugin】URL書き換えエラー', Common::exceptionArray($th, [
+                'wp_post_id' => $entry->wpPostId,
+                'title' => $entry->title,
+            ]));
+        }
+    }
+
+    /**
+     * メディア処理結果からマッピングを構築
+     *
+     * @param array<array{
+     *     wp_post_id: int,
+     *     success: bool,
+     *     media_id?: int,
+     *     path?: string,
+     *     error?: string
+     * }> $results
+     * @return array<int, int>
+     */
+    private function buildMediaMapping(array $results): array
+    {
+        $mapping = [];
+        foreach ($results as $result) {
+            if ($result['success'] && isset($result['media_id'])) {
+                $mapping[$result['wp_post_id']] = $result['media_id'];
+            }
+        }
+        return $mapping;
+    }
+
+    /**
+     * バッチサイズを最適化
+     *
+     * @param int $requestedSize
+     * @param int $totalItems
+     * @return int
+     */
+    private function optimizeBatchSize(int $requestedSize, int $totalItems): int
+    {
+        // メモリ使用量に基づく動的調整
+        $memoryUsage = memory_get_usage(true);
+        $availableMemory = $this->memoryLimit - $memoryUsage;
+
+        if ($availableMemory < ($this->memoryLimit * 0.3)) {
+            // メモリが30%以下の場合はバッチサイズを削減
+            $adjustedSize = max(self::MIN_BATCH_SIZE, intval($requestedSize * 0.5));
+        } elseif ($availableMemory > ($this->memoryLimit * 0.7)) {
+            // メモリに余裕がある場合はバッチサイズを増加
+            $adjustedSize = min(self::MAX_BATCH_SIZE, intval($requestedSize * 1.5));
+        } else {
+            $adjustedSize = $requestedSize;
+        }
+
+        // 最小・最大値で制限
+        $adjustedSize = max(self::MIN_BATCH_SIZE, min(self::MAX_BATCH_SIZE, $adjustedSize));
+
+        // 総数がバッチサイズより小さい場合は調整
+        return min($adjustedSize, $totalItems);
+    }
+
+    /**
+     * メモリ制限に達しているかチェック
+     *
+     * @return bool
+     */
+    private function isMemoryLimitReached(): bool
+    {
+        return memory_get_usage(true) > $this->memoryLimit;
+    }
+
+    /**
+     * 強制的にガベージコレクションを実行
+     */
+    private function forceGarbageCollection(): void
+    {
+        if (function_exists('gc_collect_cycles')) {
+            $before = memory_get_usage(true);
+            $collected = gc_collect_cycles();
+            $after = memory_get_usage(true);
+
+            Logger::debug('【WPImport plugin】ガベージコレクション実行', [
+                'collected_cycles' => $collected,
+                'memory_freed' => $before - $after,
+                'memory_before' => $before,
+                'memory_after' => $after,
+            ]);
+        }
+    }
+
+
+    /**
+     * カテゴリー作成処理
+     *
+     * @param array<WXRCategory> $categories
+     * @param array{
+     *     batch_size: int,
+     *     include_media: bool,
+     *     create_categories: bool,
+     *     create_tags: bool,
+     *     target_blog_id: int
+     * } $settings
+     * @return array<int, int> WordPress カテゴリーIDからa-blog cms カテゴリーIDへのマッピング
+     */
+    private function processCategoryCreation(array $categories, array $settings): array
+    {
+        try {
+            Logger::debug('【WPImport plugin】カテゴリー作成開始', [
+                'category_count' => count($categories),
+                'target_blog_id' => $settings['target_blog_id']
+            ]);
+
+            $categoryMap = $this->categoryCreator->createCategories($categories, $settings);
+
+            Logger::debug('【WPImport plugin】カテゴリー作成完了', [
+                'created_count' => count($categoryMap),
+                'mapping' => $categoryMap
+            ]);
+
+            return $categoryMap;
+
+        } catch (\Throwable $th) {
+            Logger::error('【WPImport plugin】カテゴリー作成エラー', [
+                'error' => $th->getMessage(),
+                'trace' => $th->getTraceAsString(),
+                'categories' => array_map(function($cat) {
+                    return ['id' => $cat->termId, 'name' => $cat->name];
+                }, $categories)
+            ]);
+
+            // エラーが発生した場合は空のマッピングを返す
+            return [];
+        }
+    }
+
+    /**
+     * 設定を更新
+     *
+     * @param array{
+     *     memory_limit?: int
+     * } $config
+     */
+    public function configure(array $config): void
+    {
+        if (isset($config['memory_limit'])) {
+            $this->memoryLimit = $config['memory_limit'];
+        }
+    }
+}

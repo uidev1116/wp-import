@@ -15,4 +15,6 @@ vendor
 .phplint-cache
 
 build/
-ai/
+
+# AI
+.claude

@@ -42,17 +42,15 @@ plugins/WPImport/
 
 #### GET/ - 画面表示モジュール
 ```
-GET/WpImport/
-├── Upload.php       # WXRアップロード画面
-├── Progress.php     # 進捗表示画面
-└── Report.php       # 結果レポート画面
+GET/Admin/WpImport/
+└── Progress.php     # 進捗表示画面
 ```
 
 #### POST/ - 処理実行モジュール
 ```
 POST/WpImport/
-├── Upload.php       # WXRファイルアップロード処理
-└── Execute.php      # 移行実行処理
+├── Execute.php      # 移行実行処理
+└── ProgressJson.php # 進捗データJSON取得
 ```
 
 #### Services/ - ビジネスロジック
@@ -60,15 +58,30 @@ POST/WpImport/
 Services/
 ├── WXR/
 │   ├── Parser.php           # XMLパーサー
-│   └── EntryExtractor.php   # データ抽出
+│   ├── EntryExtractor.php   # エントリーデータ抽出
+│   ├── MediaExtractor.php   # メディアデータ抽出
+│   ├── WXREntry.php         # エントリーモデル
+│   ├── WXRMedia.php         # メディアモデル
+│   ├── WXRCategory.php      # カテゴリーモデル
+│   └── WXRTag.php           # タグモデル
 │
 ├── Import/
+│   ├── BatchProcessor.php   # バッチ処理エンジン
 │   ├── EntryImporter.php    # エントリー移行
 │   ├── MediaImporter.php    # メディア移行
+│   └── CategoryCreator.php  # カテゴリー自動作成
+│
+├── Content/
 │   └── UrlRewriter.php      # URL書き換え
 │
-└── Progress/
-    └── ProgressTracker.php   # 進捗管理
+├── Media/
+│   └── Downloader.php       # メディアダウンローダー
+│
+├── Unit/
+│   └── ContentUnitCreator.php # コンテンツユニット生成
+│
+└── Helpers/
+    └── CodeGenerator.php     # コード生成ヘルパー
 ```
 
 ### /template - テンプレートファイル
